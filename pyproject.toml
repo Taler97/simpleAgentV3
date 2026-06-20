@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentcore"
+version = "3.0.0"
+description = "生产级 AI Agent 运行底座"
+requires-python = ">=3.10"
+dependencies = [
+    "pyyaml>=6.0",
+    "requests>=2.31",
+]
+
+[project.optional-dependencies]
+openai = ["openai>=1.0"]
+redis = ["redis>=5.0"]
+dev = ["pytest>=8.0", "pytest-cov>=5.0"]
+
+[project.scripts]
+agentcore = "agentcore.adapters.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["agentcore*"]

@@ -1,0 +1,17 @@
+llm:
+  model: "gpt-4o"
+  api_key: "${OPENAI_API_KEY}"
+  base_url: ""
+  temperature: 0.7
+  max_tokens: 4096
+
+memory:
+  type: "sliding_window"
+  window_size: 10
+
+runtime:
+  pool_size: 4
+
+system_prompt: >
+  你是一个有帮助的 AI 助手。你可以使用以下工具来回答用户的问题。
+  请以 JSON 格式回复，包含 thought、action 和 action_input 字段。
