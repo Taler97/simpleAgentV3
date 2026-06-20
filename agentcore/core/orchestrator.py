@@ -65,6 +65,7 @@ class Orchestrator:
         waiter: Optional[SyncWaiter] = None,
         parser: Optional[Parser] = None,
         system_prompt: Optional[str] = None,
+        checkpointer=None,
     ):
         self._llm = llm
         self._tool_manager = tool_manager
@@ -72,6 +73,35 @@ class Orchestrator:
         self._waiter = waiter or SyncWaiter()
         self._parser = parser or Parser()
         self._system_prompt = system_prompt or DEFAULT_SYSTEM_PROMPT
+        self._checkpointer = checkpointer
+
+    def _save_ckpt(
+        self,
+        session_id: str,
+        step: int,
+        messages: List[Dict[str, str]],
+        step_records: List[StepRecord],
+        user_input: str,
+        max_steps: int,
+        trace_id: str,
+        parent_skill_id: Optional[str],
+        status: str,
+        result: str = "",
+    ) -> None:
+        """写检查点（带空安全）。"""
+        if not self._checkpointer:
+            return
+        self._checkpointer.save(session_id, {
+            "step": step,
+            "messages": messages,
+            "step_records": [r.to_dict() for r in step_records],
+            "user_input": user_input,
+            "max_steps": max_steps,
+            "trace_id": trace_id,
+            "parent_skill_id": parent_skill_id,
+            "status": status,
+            "result": result,
+        })
 
     def run(
         self,
@@ -102,7 +132,35 @@ class Orchestrator:
         def _record(**kw):
             return StepRecord(trace_id=trace_id, session_id=session_id, **kw)
 
-        for step in range(1, max_steps + 1):
+        # ── 检查点恢复 ──────────────────────────────────
+        step_records: List[StepRecord] = []
+        start_step = 1
+        if self._checkpointer:
+            ckpt = self._checkpointer.load(session_id)
+            if ckpt and ckpt.get("status") == "in_progress":
+                # 恢复 messages 和步骤记录
+                messages = ckpt["messages"]
+                start_step = ckpt["step"] + 1
+                for sd in ckpt.get("step_records", []):
+                    step_records.append(StepRecord(**sd))
+                # 覆盖原始参数，确保恢复后续流程一致
+                trace_id = ckpt.get("trace_id", trace_id)
+                parent_skill_id = ckpt.get("parent_skill_id", parent_skill_id)
+                user_input = ckpt.get("user_input", user_input)
+                max_steps = ckpt.get("max_steps", max_steps)
+                # 重新生成 _record 闭包以使用更新后的变量
+                def _record(**kw):
+                    return StepRecord(trace_id=trace_id, session_id=session_id, **kw)
+            elif ckpt and ckpt.get("status") == "completed":
+                # 已完成的任务直接返回缓存结果
+                record = _record(
+                    step=0, action="", action_input="",
+                    thought="", observation="", result=ckpt.get("result", ""),
+                )
+                yield record
+                return ckpt.get("result", "")
+
+        for step in range(start_step, max_steps + 1):
             # === 步骤 1: 调用 LLM ===
             llm_result = self._waiter.run(
                 func=lambda: self._llm.generate(messages),
@@ -115,6 +173,7 @@ class Orchestrator:
                     step=step, action="", action_input="",
                     thought="", observation=llm_result, result=llm_result,
                 )
+                step_records.append(record)
                 yield record
                 return llm_result
 
@@ -123,6 +182,7 @@ class Orchestrator:
                     step=step, action="", action_input="",
                     thought="", observation=llm_result, result=llm_result,
                 )
+                step_records.append(record)
                 yield record
                 return llm_result
 
@@ -135,6 +195,7 @@ class Orchestrator:
                     step=step, action="", action_input="", thought="",
                     observation=error_msg, result=error_msg,
                 )
+                step_records.append(record)
                 yield record
                 return error_msg
 
@@ -160,7 +221,14 @@ class Orchestrator:
                     thought=thought, result=action_input,
                     parent_skill_id=parent_skill_id,
                 )
+                step_records.append(record)
                 yield record
+                # 写完成检查点
+                self._save_ckpt(
+                    session_id, step, messages, step_records,
+                    user_input, max_steps, trace_id, parent_skill_id,
+                    status="completed", result=action_input,
+                )
                 return action_input
 
             # === 步骤 4: 执行工具 ===
@@ -175,11 +243,19 @@ class Orchestrator:
                 thought=thought, observation=tool_result,
                 parent_skill_id=parent_skill_id,
             )
+            step_records.append(record)
             yield record
 
             # === 步骤 5: 将工具结果加入消息作为观察 ===
             messages.append({"role": "assistant", "content": llm_result})
             messages.append({"role": "user", "content": f"观察结果: {tool_result}"})
+
+            # ── 写进行中的检查点 ─────────────────────────
+            self._save_ckpt(
+                session_id, step, messages, step_records,
+                user_input, max_steps, trace_id, parent_skill_id,
+                status="in_progress",
+            )
 
         # 超过 max_steps
         timeout_msg = f"已达到最大步骤数 ({max_steps})，停止执行"
@@ -187,5 +263,12 @@ class Orchestrator:
             step=max_steps, action="", action_input="",
             thought="", observation=timeout_msg, result=timeout_msg,
         )
+        step_records.append(record)
         yield record
+        # 超时也保存完成状态（失败的完成）
+        self._save_ckpt(
+            session_id, max_steps, messages, step_records,
+            user_input, max_steps, trace_id, parent_skill_id,
+            status="completed", result=timeout_msg,
+        )
         return timeout_msg

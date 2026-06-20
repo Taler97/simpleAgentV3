@@ -20,12 +20,13 @@ import os
 import signal
 import sys
 from threading import Event
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 from agentcore.adapters.agent import Agent
 from agentcore.adapters.decorators import _ToolWrapper, tool as _tool_decorator
 from agentcore.adapters.skill import SkillBase
 from agentcore.core.interfaces import LLMClient, MemoryInterface
+from agentcore.runtime.checkpointer import BaseCheckpointer, FileCheckpointer
 
 logger = logging.getLogger("agentcore")
 
@@ -53,6 +54,8 @@ class AgentCore:
         window_size: int = 10,
         pool_size: int = 4,
         log_path: str = "agentcore.jsonl",
+        checkpointer: Optional[BaseCheckpointer] = None,
+        checkpoint_dir: str = ".checkpoints",
     ):
         self._name = name
         self._log_path = log_path
@@ -60,6 +63,7 @@ class AgentCore:
         self._builtin_tools: List[Any] = []
         self._memory: Optional[MemoryInterface] = memory
         self._detected_llm: Optional[LLMClient] = None
+        self._checkpointer = checkpointer or FileCheckpointer(checkpoint_dir)
 
         self._config = {
             "api_key": api_key or os.environ.get("OPENAI_API_KEY", ""),
@@ -159,6 +163,7 @@ class AgentCore:
             memory=memory,
             log_path=cfg["log_path"],
             pool_size=cfg["pool_size"],
+            checkpointer=self._checkpointer,
         )
 
         # 注册已收集的内置工具
@@ -367,6 +372,32 @@ class AgentCore:
             serve_health(agent, host=host, port=port)
         finally:
             agent.shutdown()
+
+    # ── 检查点管理 ────────────────────────────────────
+
+    @property
+    def checkpointer(self) -> BaseCheckpointer:
+        """获取当前检查点实例。"""
+        return self._checkpointer
+
+    def list_checkpoints(self) -> List[Dict[str, Any]]:
+        """列出所有检查点摘要。"""
+        sessions = self._checkpointer.list_sessions()
+        result = []
+        for sid in sessions:
+            ckpt = self._checkpointer.load(sid)
+            if ckpt:
+                result.append({
+                    "session_id": sid,
+                    "status": ckpt.get("status"),
+                    "step": ckpt.get("step"),
+                    "max_steps": ckpt.get("max_steps"),
+                })
+        return result
+
+    def clear_checkpoint(self, session_id: str) -> None:
+        """清除指定 session 的检查点。"""
+        self._checkpointer.delete(session_id)
 
     # ── 属性 ──────────────────────────────────────────
 

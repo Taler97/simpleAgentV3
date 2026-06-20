@@ -11,6 +11,7 @@ from agentcore.core.interfaces import LLMClient, MemoryInterface, ToolInterface
 from agentcore.core.orchestrator import Orchestrator, StepRecord
 from agentcore.core.tool_manager import ToolManager
 from agentcore.runtime.broadcaster import Broadcaster
+from agentcore.runtime.checkpointer import BaseCheckpointer
 from agentcore.runtime.runner import SyncRunner
 from agentcore.runtime.waiter import SyncWaiter
 from agentcore.services.logger.file_logger import FileLogger
@@ -27,6 +28,7 @@ class Agent:
         system_prompt: Optional[str] = None,
         pool_size: int = 4,
         log_path: str = "",
+        checkpointer: Optional[BaseCheckpointer] = None,
     ):
         self._llm = llm
         self._memory = memory or SlidingWindowMemory()
@@ -36,6 +38,7 @@ class Agent:
         self._broadcaster = Broadcaster(pool=self._pool)
         self._skills: Dict[str, _SkillWrapper] = {}
         self._system_prompt = system_prompt
+        self._checkpointer = checkpointer
 
         # 自动注册 JSONL 日志监听器
         if log_path:
@@ -100,6 +103,7 @@ class Agent:
             memory=self._memory,
             waiter=self._waiter,
             system_prompt=self._system_prompt,
+            checkpointer=self._checkpointer,
         )
         runner = SyncRunner(orchestrator)
         result, steps = runner.run(
@@ -129,6 +133,39 @@ class Agent:
         return None
 
     # --- 生命周期 ---
+
+    def resume(
+        self,
+        session_id: str,
+        max_steps: int = 10,
+        llm_timeout: float = 30.0,
+        tool_timeout: float = 15.0,
+        cancel_event: Optional[Event] = None,
+    ) -> str:
+        """从检查点恢复执行。
+
+        如果 session 没有 in_progress 的检查点，等同于普通的 chat()。
+        调用后会重用原 session_id，Orchestrator 自动检测检查点并恢复。
+        """
+        if not self._checkpointer:
+            raise RuntimeError("Agent 未启用检查点（未传入 checkpointer）")
+
+        ckpt = self._checkpointer.load(session_id)
+        if ckpt is None:
+            raise ValueError(f"session '{session_id}' 没有可恢复的检查点")
+
+        user_input = ckpt.get("user_input", "")
+        if not user_input:
+            raise ValueError(f"session '{session_id}' 的检查点缺少 user_input")
+
+        return self.chat(
+            user_input=user_input,
+            session_id=session_id,
+            max_steps=max_steps,
+            llm_timeout=llm_timeout,
+            tool_timeout=tool_timeout,
+            cancel_event=cancel_event,
+        )
 
     def shutdown(self) -> None:
         """释放资源。"""
