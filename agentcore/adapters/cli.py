@@ -1,70 +1,50 @@
-"""交互式 CLI - 提供命令行对话界面。"""
+"""交互式 CLI — AgentCore V3 唯一入口。
+
+运行方式:
+    agentcore                      # 交互式对话
+    agentcore "1+1等于几？"         # 单次提问
+    agentcore -c 配置文件.yaml      # 指定配置文件
+"""
 
 import argparse
 import logging
-import signal
+import os
 import sys
-from threading import Event
 
-from agentcore.adapters.builder import AgentBuilder
-from agentcore.services.logger.file_logger import FileLogger
+from agentcore import AgentCore
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
 
 def main():
-    parser = argparse.ArgumentParser(description="AgentCore V3 交互式 CLI")
-    parser.add_argument("-c", "--config", default="resources/config.yaml", help="配置文件路径")
-    parser.add_argument("--log", default="agentcore.log.jsonl", help="日志文件路径")
+    parser = argparse.ArgumentParser(description="AgentCore V3 — 生产级 AI Agent 运行底座")
+    parser.add_argument("query", nargs="?", default="", help="单次提问内容（不传则进入交互模式）")
+    parser.add_argument("-c", "--config", default="", help="配置文件路径（默认 resources/config.yaml）")
     args = parser.parse_args()
 
-    # 构建 Agent
-    logger.info("正在从 %s 加载配置...", args.config)
+    # ── 定位配置文件 ──────────────────────────────────
+    root = os.path.dirname(os.path.abspath(__file__))
+    config_path = args.config or os.path.join(root, "..", "..", "resources", "config.yaml")
+
+    # ── 构建 AgentCore ────────────────────────────────
+    app = AgentCore(config_path=config_path)
+
+    # ── 自动注册 @tool 工具 ────────────────────────────
     try:
-        agent = AgentBuilder.from_yaml(args.config).build()
-    except FileNotFoundError:
-        logger.error("配置文件未找到: %s", args.config)
-        sys.exit(1)
+        import tools  # noqa: F811
+        app.auto_register(tools)
+    except ImportError:
+        logger.warning("未找到 tools 模块，跳过工具自动注册")
 
-    # 注册日志监听器
-    file_logger = FileLogger(args.log)
-    agent.add_listener("file_logger", lambda record: file_logger.write(record))
+    try:
+        from agentcore.services import tools as fw_tools
+        app.auto_register(fw_tools)
+    except ImportError:
+        logger.warning("未找到 services.tools 模块，跳过框架工具自动注册")
 
-    # 处理 Ctrl+C
-    cancel_event = Event()
-
-    def _signal_handler(sig, frame):
-        print("\n[正在取消...]")
-        cancel_event.set()
-
-    signal.signal(signal.SIGINT, _signal_handler)
-
-    print("AgentCore V3 CLI (输入 'exit' 退出, 'clear' 清屏)")
-    print("-" * 50)
-
-    while True:
-        try:
-            user_input = input(">>> ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print("\n再见！")
-            break
-
-        if not user_input:
-            continue
-        if user_input.lower() in ("exit", "quit"):
-            print("再见！")
-            break
-        if user_input.lower() == "clear":
-            import os
-            os.system("cls" if os.name == "nt" else "clear")
-            continue
-
-        result = agent.chat(user_input, cancel_event=cancel_event)
-        print(f"\n{result}\n")
-        cancel_event.clear()
-
-    agent.shutdown()
+    # ── 运行 ──────────────────────────────────────────
+    app.run(query=args.query)
 
 
 if __name__ == "__main__":

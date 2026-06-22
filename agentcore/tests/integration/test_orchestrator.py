@@ -21,7 +21,7 @@ class MockLLM:
         self.call_count = 0
         self.last_messages = None
 
-    def generate(self, messages: List[Dict[str, str]]) -> str:
+    def generate(self, messages: List[Dict[str, str]], response_format: Any = None) -> str:
         self.call_count += 1
         self.last_messages = messages
         if not self._responses:
@@ -136,7 +136,10 @@ class TestOrchestratorIntegration:
         """LLM 返回无效 JSON。"""
         llm = MockLLM(["这不是 JSON"])
         tm = ToolManager()
-        orch = Orchestrator(llm=llm, tool_manager=tm, memory=SlidingWindowMemory())
+        orch = Orchestrator(
+            llm=llm, tool_manager=tm, memory=SlidingWindowMemory(),
+            max_parse_retries=0,  # 禁用重试，直接测无效 JSON 场景
+        )
 
         records = []
         gen = orch.run("测试", max_steps=5)

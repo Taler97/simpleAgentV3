@@ -1,4 +1,4 @@
-"""纯 HTTP 实现的 LLM 客户端（兼容 OpenAI API 格式）。"""
+"""纯 HTTP 实现的 LLM 客户端。"""
 
 import json
 from typing import Dict, List

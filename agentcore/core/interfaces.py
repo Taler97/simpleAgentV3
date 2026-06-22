@@ -7,8 +7,17 @@ from typing import Any, Dict, List, Protocol, runtime_checkable
 class LLMClient(Protocol):
     """LLM 客户端接口。"""
 
-    def generate(self, messages: List[Dict[str, str]]) -> str:
-        """输入消息列表，返回生成文本。"""
+    def generate(
+        self,
+        messages: List[Dict[str, str]],
+        response_format: Any = None,
+    ) -> str:
+        """输入消息列表，返回生成文本。
+
+        Args:
+            messages: 对话消息列表
+            response_format: OpenAI 格式的 response_format 参数，如 {"type": "json_object"}
+        """
         ...
 
 

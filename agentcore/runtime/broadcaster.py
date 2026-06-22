@@ -1,4 +1,4 @@
-"""Broadcaster - 线程池分发事件（不使用 asyncio）。"""
+"""Broadcaster - 线程池分发事件。"""
 
 import logging
 from concurrent.futures import ThreadPoolExecutor

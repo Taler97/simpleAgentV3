@@ -21,7 +21,6 @@ class DatetimeTool:
 
     def execute(self, input_str: str) -> str:
         """执行工具，返回当前时间字符串。"""
-        # 简单的格式解析
         fmt = input_str.strip() or "%Y-%m-%d %H:%M:%S"
         try:
             return datetime.now().strftime(fmt)

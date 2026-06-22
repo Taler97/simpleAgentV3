@@ -1,4 +1,4 @@
-"""轻量健康检查 HTTP 服务器（基于标准库，无外部依赖）。"""
+"""轻量健康检查 HTTP 服务器"""
 
 import json
 import time

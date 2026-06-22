@@ -2,7 +2,7 @@
 
 import time
 from threading import Event
-from typing import Dict, List
+from typing import Any, Dict, List
 
 import pytest
 
@@ -19,7 +19,7 @@ class _SlowLLM:
         self._delay = delay
         self._response = response or '{"thought": "ok", "action": "", "action_input": "done"}'
 
-    def generate(self, messages: List[Dict[str, str]]) -> str:
+    def generate(self, messages: List[Dict[str, str]], response_format: Any = None) -> str:
         time.sleep(self._delay)
         return self._response
 

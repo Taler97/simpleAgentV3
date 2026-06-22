@@ -66,6 +66,8 @@ class Orchestrator:
         parser: Optional[Parser] = None,
         system_prompt: Optional[str] = None,
         checkpointer=None,
+        max_parse_retries: int = 2,
+        repeated_action_threshold: int = 3,
     ):
         self._llm = llm
         self._tool_manager = tool_manager
@@ -74,6 +76,24 @@ class Orchestrator:
         self._parser = parser or Parser()
         self._system_prompt = system_prompt or DEFAULT_SYSTEM_PROMPT
         self._checkpointer = checkpointer
+        self._max_parse_retries = max_parse_retries
+        self._repeated_action_threshold = repeated_action_threshold
+
+    # ── 公共辅助方法 ────────────────────────────────────
+
+    @staticmethod
+    def _detect_repeated_action(
+        action: str,
+        step_records: List[StepRecord],
+        threshold: int = 3,
+    ) -> bool:
+        """检测最近 N 步是否存在重复的工具调用（陷入循环）。"""
+        recent = [r for r in step_records[-threshold:] if r.action]
+        if len(recent) < threshold:
+            return False
+        # 最近 threshold 次都是同一个工具
+        actions = [r.action for r in recent[-threshold:]]
+        return len(set(actions)) == 1 and actions[-1] == action
 
     def _save_ckpt(
         self,
@@ -160,10 +180,15 @@ class Orchestrator:
                 yield record
                 return ckpt.get("result", "")
 
+        parse_retry_count = 0
+
         for step in range(start_step, max_steps + 1):
             # === 步骤 1: 调用 LLM ===
             llm_result = self._waiter.run(
-                func=lambda: self._llm.generate(messages),
+                func=lambda: self._llm.generate(
+                    messages,
+                    response_format={"type": "json_object"},
+                ),
                 timeout=llm_timeout,
                 cancel_event=cancel_event,
             )
@@ -190,7 +215,15 @@ class Orchestrator:
             try:
                 parsed = self._parser.parse(llm_result)
             except ValueError as e:
-                error_msg = f"解析失败: {e}"
+                if parse_retry_count < self._max_parse_retries:
+                    parse_retry_count += 1
+                    error_msg = (
+                        f"JSON 格式错误，请严格按照 {{\\\"thought\\\": ..., \\\"action\\\": ..., \\\"action_input\\\": ...}} "
+                        f"格式输出有效的 JSON，且只输出 JSON。错误: {e}"
+                    )
+                    messages.append({"role": "user", "content": error_msg})
+                    continue
+                error_msg = f"多次解析失败 (已重试 {self._max_parse_retries} 次): {e}"
                 record = _record(
                     step=step, action="", action_input="", thought="",
                     observation=error_msg, result=error_msg,
@@ -249,6 +282,18 @@ class Orchestrator:
             # === 步骤 5: 将工具结果加入消息作为观察 ===
             messages.append({"role": "assistant", "content": llm_result})
             messages.append({"role": "user", "content": f"观察结果: {tool_result}"})
+
+            # === 步骤 6: 循环检测 ─────────────────────────
+            if self._detect_repeated_action(
+                action, step_records, self._repeated_action_threshold,
+            ):
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        f"你已连续多次调用 \"{action}\"，未能取得有效进展。"
+                        "请尝试换一种方式，或直接基于已有信息给出最终答案。"
+                    ),
+                })
 
             # ── 写进行中的检查点 ─────────────────────────
             self._save_ckpt(

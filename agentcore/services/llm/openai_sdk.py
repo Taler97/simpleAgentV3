@@ -1,6 +1,6 @@
 """OpenAI SDK 实现的 LLM 客户端。"""
 
-from typing import Dict, List
+from typing import Any, Dict, List, Optional
 
 
 class OpenAILLM:
@@ -21,11 +21,18 @@ class OpenAILLM:
         self._max_tokens = max_tokens
         self._client = OpenAI(api_key=api_key or None, base_url=base_url or None)
 
-    def generate(self, messages: List[Dict[str, str]]) -> str:
-        resp = self._client.chat.completions.create(
+    def generate(
+        self,
+        messages: List[Dict[str, str]],
+        response_format: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        kwargs = dict(
             model=self._model,
             messages=messages,
             temperature=self._temperature,
             max_tokens=self._max_tokens,
         )
+        if response_format is not None:
+            kwargs["response_format"] = response_format
+        resp = self._client.chat.completions.create(**kwargs)
         return resp.choices[0].message.content or ""
