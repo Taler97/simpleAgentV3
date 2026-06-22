@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+
+# 运行时产物
+logs/
+.checkpoints/
+
+# 演示文件（非框架核心）
+demo_mcp.py
+demo_mcp_server.py
+example.txt
+
+# 用户配置文件（可能含 API Key）
+.env
+
+# 框架内置工具（场景专用，非框架核心）
+agentcore/services/tools/input/
+agentcore/services/tools/output/

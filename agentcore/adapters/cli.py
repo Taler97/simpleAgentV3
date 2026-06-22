@@ -10,7 +10,6 @@ import argparse
 import logging
 import os
 import sys
-
 from agentcore import AgentCore
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -32,16 +31,10 @@ def main():
 
     # ── 自动注册 @tool 工具 ────────────────────────────
     try:
-        import tools  # noqa: F811
-        app.auto_register(tools)
-    except ImportError:
-        logger.warning("未找到 tools 模块，跳过工具自动注册")
-
-    try:
         from agentcore.services import tools as fw_tools
         app.auto_register(fw_tools)
     except ImportError:
-        logger.warning("未找到 services.tools 模块，跳过框架工具自动注册")
+        logger.warning("未找到 services.tools 模块，跳过工具自动注册")
 
     # ── 运行 ──────────────────────────────────────────
     app.run(query=args.query)

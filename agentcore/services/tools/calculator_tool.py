@@ -2,7 +2,7 @@
 
 import ast
 import operator
-from typing import Any, Dict
+from agentcore.adapters.decorators import tool
 
 
 # 安全运算白名单
@@ -19,44 +19,33 @@ _ALLOWED_OPS = {
 }
 
 
-class CalculatorTool:
-    name = "calculator"
-    description = "执行数学表达式计算，支持 + - * / ** %"
-    parameters_schema: Dict[str, Any] = {
-        "type": "object",
-        "properties": {
-            "expression": {
-                "type": "string",
-                "description": "数学表达式，如 1 + 2 * 3",
-            }
-        },
-        "required": ["expression"],
-    }
+def _eval_node(node) -> float:
+    """安全地评估 AST 节点。"""
+    if isinstance(node, ast.Constant):
+        return node.value
+    elif isinstance(node, ast.BinOp):
+        op = _ALLOWED_OPS.get(type(node.op))
+        if op is None:
+            raise ValueError(f"不支持的运算符: {type(node.op).__name__}")
+        return op(_eval_node(node.left), _eval_node(node.right))
+    elif isinstance(node, ast.UnaryOp):
+        op = _ALLOWED_OPS.get(type(node.op))
+        if op is None:
+            raise ValueError(f"不支持的运算符: {type(node.op).__name__}")
+        return op(_eval_node(node.operand))
+    else:
+        raise ValueError(f"不支持的表达式类型: {type(node).__name__}")
 
-    def execute(self, input_str: str) -> str:
-        """安全执行数学表达式。"""
-        expr = input_str.strip()
-        if not expr:
-            return "错误: 表达式为空"
-        try:
-            tree = ast.parse(expr, mode="eval")
-            result = self._eval(tree.body)
-            return str(result)
-        except Exception as e:
-            return f"计算错误: {e}"
 
-    def _eval(self, node) -> float:
-        if isinstance(node, ast.Constant):
-            return node.value
-        elif isinstance(node, ast.BinOp):
-            op = _ALLOWED_OPS.get(type(node.op))
-            if op is None:
-                raise ValueError(f"不支持的运算符: {type(node.op).__name__}")
-            return op(self._eval(node.left), self._eval(node.right))
-        elif isinstance(node, ast.UnaryOp):
-            op = _ALLOWED_OPS.get(type(node.op))
-            if op is None:
-                raise ValueError(f"不支持的运算符: {type(node.op).__name__}")
-            return op(self._eval(node.operand))
-        else:
-            raise ValueError(f"不支持的表达式类型: {type(node).__name__}")
+@tool
+def calculator(expression: str) -> str:
+    """执行数学表达式计算，支持 + - * ** / %"""
+    expr = expression.strip()
+    if not expr:
+        return "错误: 表达式为空"
+    try:
+        tree = ast.parse(expr, mode="eval")
+        result = _eval_node(tree.body)
+        return str(result)
+    except Exception as e:
+        return f"计算错误: {e}"

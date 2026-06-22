@@ -52,6 +52,22 @@ class BaseCheckpointer:
         raise NotImplementedError
 
 
+class NullCheckpointer(BaseCheckpointer):
+    """空检查点 — 所有方法无操作，用于禁用检查点功能。"""
+
+    def save(self, session_id: str, state: Dict[str, Any]) -> None:
+        pass
+
+    def load(self, session_id: str) -> Optional[Dict[str, Any]]:
+        return None
+
+    def delete(self, session_id: str) -> None:
+        pass
+
+    def list_sessions(self) -> List[str]:
+        return []
+
+
 class FileCheckpointer(BaseCheckpointer):
     """基于本地文件的检查点存储。
 

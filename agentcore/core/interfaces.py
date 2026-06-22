@@ -1,6 +1,6 @@
 """接口定义 - 所有可插拔组件的抽象接口。"""
 
-from typing import Any, Dict, List, Protocol, runtime_checkable
+from typing import Any, Dict, Iterator, List, Protocol, runtime_checkable
 
 
 @runtime_checkable
@@ -11,12 +11,17 @@ class LLMClient(Protocol):
         self,
         messages: List[Dict[str, str]],
         response_format: Any = None,
-    ) -> str:
+        stream: bool = False,
+    ) -> str | Iterator[str]:
         """输入消息列表，返回生成文本。
+
+        当 stream=True 时返回 Iterator[str]（逐 token 产出），
+        否则返回完整 str。
 
         Args:
             messages: 对话消息列表
-            response_format: OpenAI 格式的 response_format 参数，如 {"type": "json_object"}
+            response_format: OpenAI 格式的 response_format 参数
+            stream: 是否启用流式输出
         """
         ...
 

@@ -109,6 +109,12 @@ class AgentCore:
             self._config["log_path"] = cfg["log_path"]
             self._log_path = cfg["log_path"]
 
+        self._config["system_prompt"] = cfg.get("system_prompt", "")
+        self._config["session_id"] = cfg.get("session_id", "default")
+
+        # MCP Server 配置
+        self._config["mcp_servers"] = cfg.get("mcp_servers", [])
+
     # ── 内部构建 Agent ────────────────────────────────
 
     def _build(self) -> Agent:
@@ -161,6 +167,7 @@ class AgentCore:
         self._agent = Agent(
             llm=llm,
             memory=memory,
+            system_prompt=cfg.get("system_prompt") or None,
             log_path=cfg["log_path"],
             pool_size=cfg["pool_size"],
             checkpointer=self._checkpointer,
@@ -173,6 +180,24 @@ class AgentCore:
         # 注册已收集的技能
         for skill_instance in getattr(self, "_builtin_skills", []):
             self._agent.add_skill(skill_instance)
+
+        # ── 从配置启动 MCP Server ──────────────────────
+        self._mcp_clients = []
+        for server_cfg in cfg.get("mcp_servers", []):
+            try:
+                from agentcore.mcp import MCPClient
+                client = MCPClient(
+                    command=server_cfg["command"],
+                    args=server_cfg.get("args", []),
+                    server_name=server_cfg.get("name", "mcp"),
+                )
+                tools = client.list_tools()
+                for t in tools:
+                    self._agent.add_tool(t)
+                self._mcp_clients.append(client)
+                logger.info("MCP '%s': 注册 %d 个工具", server_cfg.get("name", "mcp"), len(tools))
+            except Exception as e:
+                logger.warning("MCP '%s' 启动失败: %s", server_cfg.get("name", "mcp"), e)
 
         return self._agent
 
@@ -272,6 +297,7 @@ class AgentCore:
         self,
         query: str = "",
         *,
+        session_id: str = "",
         interactive: bool = True,
         host: str = "",
         port: int = 0,
@@ -280,6 +306,7 @@ class AgentCore:
 
         参数:
             query: 单次提问内容（提供时自动进入 ask 模式）
+            session_id: 会话 ID（留空则使用配置文件中的值）
             interactive: 是否交互式（默认 True，被 query 覆盖）
             host: 健康检查服务监听地址
             port: 健康检查服务端口
@@ -293,22 +320,26 @@ class AgentCore:
         if not self._config["api_key"]:
             logger.warning("未设置 API Key，请设置 OPENAI_API_KEY 环境变量或传入 api_key")
 
+        # session_id: 参数 > 配置文件 > 默认值
+        sid = session_id or self._config.get("session_id", "default")
+
         # 确定运行模式
         if query:
-            return self._run_ask(agent, query)
+            return self._run_ask(agent, query, session_id=sid)
         if host and port:
             return self._run_serve(agent, host, port)
         if interactive:
-            return self._run_interactive(agent)
+            return self._run_interactive(agent, session_id=sid)
 
         # 默认交互模式
-        return self._run_interactive(agent)
+        return self._run_interactive(agent, session_id=sid)
 
     # ── 交互模式 ──────────────────────────────────────
 
-    def _run_interactive(self, agent: Agent):
+    def _run_interactive(self, agent: Agent, session_id: str = "default"):
         """交互式对话。"""
         cancel_event = Event()
+        current_sid = session_id
 
         def _signal_handler(sig, frame):
             print("\n[正在取消...]")
@@ -320,7 +351,8 @@ class AgentCore:
         print("=" * 56)
         print(f"  AgentCore V3 — 交互式对话  ({self._name})")
         print("=" * 56)
-        print("  命令: exit/quit 退出 | clear 清屏 | /log 查看日志")
+        print(f"  Session: {current_sid}  |  命令: exit/quit 退出 | clear 清屏")
+        print(f"  /session <id> 切换对话 | /log 查看日志")
         print()
 
         while True:
@@ -341,9 +373,13 @@ class AgentCore:
             if text.lower() == "/log":
                 print(f"  {os.path.abspath(self._log_path)}")
                 continue
+            if text.lower().startswith("/session "):
+                current_sid = text.split(" ", 1)[1].strip()
+                print(f"  切换到 Session: {current_sid}\n")
+                continue
 
             try:
-                result = agent.chat(text, cancel_event=cancel_event)
+                result = agent.chat(text, cancel_event=cancel_event, session_id=current_sid)
                 print(f"\n{result}\n")
             except Exception as e:
                 print(f"\n[错误] {e}\n")
@@ -351,17 +387,19 @@ class AgentCore:
                 cancel_event.clear()
 
         agent.shutdown()
+        self.shutdown()
 
     # ── 单次提问模式 ──────────────────────────────────
 
-    def _run_ask(self, agent: Agent, query: str):
+    def _run_ask(self, agent: Agent, query: str, session_id: str = "default"):
         """单次提问。"""
         try:
-            result = agent.chat(query)
+            result = agent.chat(query, session_id=session_id)
             print(result)
             return result
         finally:
             agent.shutdown()
+            self.shutdown()
 
     # ── 健康检查模式 ──────────────────────────────────
 
@@ -372,6 +410,7 @@ class AgentCore:
             serve_health(agent, host=host, port=port)
         finally:
             agent.shutdown()
+            self.shutdown()
 
     # ── 检查点管理 ────────────────────────────────────
 
@@ -398,6 +437,15 @@ class AgentCore:
     def clear_checkpoint(self, session_id: str) -> None:
         """清除指定 session 的检查点。"""
         self._checkpointer.delete(session_id)
+
+    def shutdown(self) -> None:
+        """释放资源，包括关闭 MCP Server 连接。"""
+        for client in getattr(self, "_mcp_clients", []):
+            try:
+                client.close()
+            except Exception:
+                pass
+        self._mcp_clients = []
 
     # ── 属性 ──────────────────────────────────────────
 
